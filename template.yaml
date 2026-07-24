@@ -6,6 +6,7 @@ Parameters:
   SourceIcalUrl:
     Type: String
     Description: Public HTTPS iCal (.ics) feed URL to poll.
+    NoEcho: true
   OrganizerEmail:
     Type: String
     Description: SES-verified sender used as the invite ORGANIZER.
