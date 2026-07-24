@@ -130,6 +130,7 @@ Resources:
       CodeUri: src/
       Handler: caldav_forwarder.poller.handler
       Timeout: 60
+      ReservedConcurrentExecutions: 1  # scheduled singleton — never run two polls at once
       Environment:
         Variables:
           TABLE_NAME: !Ref Table
@@ -154,6 +155,7 @@ Resources:
     Properties:
       CodeUri: src/
       Handler: caldav_forwarder.consumer.handler
+      ReservedConcurrentExecutions: 5  # bound concurrent SES sends / blast radius
       Environment:
         Variables:
           ORGANIZER_EMAIL: !Ref OrganizerEmail
