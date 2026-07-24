@@ -60,7 +60,7 @@ def _process(record: SQSRecord, organizer: str, dest: str) -> None:
     record_data = {
         "idempotency_key": f"{new_image['PK']}#{new_image['SK']}",
         "action": str(new_image["action"]),
-        "payload": json.loads(new_image["payload"]),
+        "payload": new_image["payload"],  # Powertools already deserialized the DynamoDB map
     }
     _send_invite(record_data=record_data, organizer=organizer, dest=dest)
 

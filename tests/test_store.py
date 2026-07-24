@@ -6,8 +6,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from boto3.dynamodb.types import TypeDeserializer
 
 from caldav_forwarder import poller, store
+
+_deserializer = TypeDeserializer()
 
 # Fixed clock so the sample feed's Jan/Feb 2026 events count as upcoming.
 _DEFAULT_NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -101,8 +104,6 @@ END:VEVENT
 def test_cancel_payload_retains_dtstart_for_the_hold(
     monkeypatch: pytest.MonkeyPatch, dynamodb: Any, sample_ics: bytes, lambda_context: Any
 ) -> None:
-    import json
-
     _run_poll(monkeypatch, sample_ics, lambda_context)
     without_timed = sample_ics.replace(
         b"""BEGIN:VEVENT
@@ -121,7 +122,7 @@ END:VEVENT
     _run_poll(monkeypatch, without_timed, lambda_context)
 
     cancel = next(i for i in _outbox_items(dynamodb) if i["action"]["S"] == "CANCEL")
-    payload = json.loads(cancel["payload"]["S"])
+    payload = _deserializer.deserialize(cancel["payload"])
     assert payload["uid"] == "timed-1@example.com"
     assert payload["dtstart"]["value"] == "2026-01-15T09:00:00"
 
@@ -154,6 +155,21 @@ def test_past_events_are_not_forwarded(
 
     assert result == {"events": 2, "upcoming": 1, "changes": 1}
     assert set(store.scan_states()) == {("future-1@example.com", "MASTER")}
+
+
+def test_state_rows_carry_ttl_except_open_ended_recurrence(
+    monkeypatch: pytest.MonkeyPatch, dynamodb: Any, sample_ics: bytes, lambda_context: Any
+) -> None:
+    _run_poll(monkeypatch, sample_ics, lambda_context)
+
+    def state(uid: str) -> dict[str, Any]:
+        return dynamodb.get_item(
+            TableName="caldav-forwarder-test",
+            Key={"PK": {"S": f"EVENT#{uid}"}, "SK": {"S": "STATE#MASTER"}},
+        )["Item"]
+
+    assert "ttl" in state("timed-1@example.com")  # one-off → bounded
+    assert "ttl" not in state("recurring-1@example.com")  # open-ended weekly → persists
 
 
 def test_events_that_aged_into_the_past_are_not_cancelled(

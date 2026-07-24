@@ -54,15 +54,28 @@ def _apply_creates_and_updates(
     changes = 0
     for key, event in desired.items():
         existing = states.get(key)
+        ttl = ical.state_ttl(event.payload)
         if existing is None:
             store.write_change(
-                key, "CREATE", 0, event.payload, content_hash=event.content_hash, now=now
+                key,
+                "CREATE",
+                0,
+                event.payload,
+                content_hash=event.content_hash,
+                state_ttl=ttl,
+                now=now,
             )
             changes += 1
         elif existing["hash"] != event.content_hash:
             sequence = existing["sequence"] + 1
             store.write_change(
-                key, "UPDATE", sequence, event.payload, content_hash=event.content_hash, now=now
+                key,
+                "UPDATE",
+                sequence,
+                event.payload,
+                content_hash=event.content_hash,
+                state_ttl=ttl,
+                now=now,
             )
             changes += 1
     return changes

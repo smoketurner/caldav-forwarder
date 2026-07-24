@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -77,6 +77,26 @@ def test_is_upcoming_keeps_recurrence_with_future_until() -> None:
         "dtend": {"kind": "zoned", "tzid": "America/New_York", "value": "2026-01-05T14:00:00"},
     }
     assert ical.is_upcoming(payload, _CUTOFF) is True
+
+
+def test_state_ttl_one_off_expires_after_event() -> None:
+    payload = {"rrule": None, "dtend": {"kind": "date", "value": "2026-08-01"}}
+    expected = int((datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=30)).timestamp())
+    assert ical.state_ttl(payload) == expected
+
+
+def test_state_ttl_open_ended_recurrence_never_expires() -> None:
+    payload = {"rrule": "FREQ=WEEKLY;BYDAY=MO", "dtend": {"kind": "date", "value": "2019-01-01"}}
+    assert ical.state_ttl(payload) is None
+
+
+def test_state_ttl_recurrence_with_until_expires_after_until() -> None:
+    payload = {
+        "rrule": "FREQ=WEEKLY;UNTIL=20261231T000000Z",
+        "dtend": {"kind": "date", "value": "2026-01-01"},
+    }
+    expected = int((datetime(2026, 12, 31, tzinfo=UTC) + timedelta(days=30)).timestamp())
+    assert ical.state_ttl(payload) == expected
 
 
 def test_skips_birthdays_and_anniversaries(sample_ics: bytes) -> None:

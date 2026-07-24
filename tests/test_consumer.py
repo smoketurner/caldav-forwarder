@@ -9,6 +9,7 @@ from typing import Any
 
 import boto3
 import pytest
+from boto3.dynamodb.types import TypeSerializer
 from moto import mock_aws
 
 from caldav_forwarder import consumer
@@ -17,6 +18,7 @@ _ORGANIZER = "holds@example.com"
 _DEST = "you@work.example.com"
 _PK = "EVENT#timed-1@example.com"
 _SK = "OUTBOX#MASTER#0000000000"
+_serializer = TypeSerializer()
 
 
 def _payload() -> dict[str, Any]:
@@ -36,7 +38,7 @@ def _record(message_id: str, action: str, payload: dict[str, Any]) -> dict[str, 
         "PK": {"S": _PK},
         "SK": {"S": _SK},
         "action": {"S": action},
-        "payload": {"S": json.dumps(payload)},
+        "payload": _serializer.serialize(payload),  # native DynamoDB map, like a real stream
     }
     body = {"eventName": "INSERT", "dynamodb": {"NewImage": new_image}}
     return {"messageId": message_id, "body": json.dumps(body)}
