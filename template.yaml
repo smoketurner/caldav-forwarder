@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Poll a public iCal feed and forward events as Busy holds via SES.
+
+Parameters:
+  SourceIcalUrl:
+    Type: String
+    Description: Public HTTPS iCal (.ics) feed URL to poll.
+  OrganizerEmail:
+    Type: String
+    Description: SES-verified sender used as the invite ORGANIZER.
+  DestEmail:
+    Type: String
+    Description: Work address that receives the Busy holds (invite ATTENDEE).
+  ScheduleExpression:
+    Type: String
+    Default: rate(15 minutes)
+    Description: EventBridge Scheduler expression controlling poll frequency.
+
+Globals:
+  Function:
+    Runtime: python3.14
+    Architectures: [arm64]
+    Timeout: 30
+    MemorySize: 256
+    LoggingConfig:
+      LogFormat: JSON
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: caldav-forwarder
+        POWERTOOLS_LOG_LEVEL: INFO
+        AWS_NEW_RETRIES_2026: "true"
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  IdempotencyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiration
+        Enabled: true
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  ChangeQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pipes.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-stream
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: !GetAtt Table.StreamArn
+        - PolicyName: send-queue
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ChangeQueue.Arn
+
+  OutboxPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !GetAtt Table.StreamArn
+      SourceParameters:
+        DynamoDBStreamParameters:
+          StartingPosition: LATEST
+          BatchSize: 10
+          MaximumRetryAttempts: 3
+        FilterCriteria:
+          Filters:
+            - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"SK":{"S":[{"prefix":"OUTBOX#"}]}}}}'
+      Target: !GetAtt ChangeQueue.Arn
+
+  PollerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: caldav_forwarder.poller.handler
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          SOURCE_ICAL_URL: !Ref SourceIcalUrl
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:TransactWriteItems
+              Resource: !GetAtt Table.Arn
+      Events:
+        Poll:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: !Ref ScheduleExpression
+
+  ConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: caldav_forwarder.consumer.handler
+      Environment:
+        Variables:
+          ORGANIZER_EMAIL: !Ref OrganizerEmail
+          DEST_EMAIL: !Ref DestEmail
+          IDEMPOTENCY_TABLE_NAME: !Ref IdempotencyTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: ses:SendRawEmail
+              Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${OrganizerEmail}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !GetAtt IdempotencyTable.Arn
+      Events:
+        Changes:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ChangeQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  TableName:
+    Value: !Ref Table
+  ChangeQueueUrl:
+    Value: !Ref ChangeQueue
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue

@@ -1,0 +1,36 @@
+[project]
+name = "caldav-forwarder"
+version = "0.1.0"
+description = "Poll a public iCal feed and forward events as Busy holds via SES."
+requires-python = ">=3.14"
+dependencies = [
+    "aws-lambda-powertools==3.31.1",
+    "icalendar==7.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "boto3==1.43.55",
+    "moto==5.2.2",
+    "pytest==9.1.1",
+    "ruff==0.16.0",
+    "ty==0.0.63",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "SIM", "C4", "PTH", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ty.environment]
+python-version = "3.14"

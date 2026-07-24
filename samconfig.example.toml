@@ -1,0 +1,19 @@
+# Template for the local SAM deploy config.
+#
+#   cp samconfig.example.toml samconfig.toml   # samconfig.toml is gitignored
+#   $EDITOR samconfig.toml                     # fill in your real values
+#   make deploy-guided                         # first deploy; then `make deploy`
+#
+# SourceIcalUrl accepts webcal:// share links (normalized to https).
+# OrganizerEmail (and DestEmail in the SES sandbox) must be verified SES identities.
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "caldav-forwarder"
+region = "us-east-1"
+resolve_s3 = true
+s3_prefix = "caldav-forwarder"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+parameter_overrides = "SourceIcalUrl=\"webcal://pXX-caldav.icloud.com/published/2/XXXXXXXXXXXX\" OrganizerEmail=\"holds@example.com\" DestEmail=\"you@work.example.com\" ScheduleExpression=\"rate(15 minutes)\""
+image_repositories = []
