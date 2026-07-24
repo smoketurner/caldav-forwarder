@@ -18,6 +18,7 @@ _SKIP_SUMMARY_TOKENS = ("birthday", "anniversary", "🎂")
 _FETCH_TIMEOUT_SECONDS = 30
 _DEFAULT_TIMED_DURATION = timedelta(hours=1)
 _DEFAULT_ALLDAY_DURATION = timedelta(days=1)
+_STATE_RETENTION = timedelta(days=30)
 
 
 @dataclass(frozen=True)
@@ -219,3 +220,19 @@ def _end_utc(dtend: dict[str, Any]) -> datetime:
     if dtend["kind"] == "zoned":
         return naive.replace(tzinfo=ZoneInfo(dtend["tzid"])).astimezone(UTC)
     return naive.replace(tzinfo=UTC)
+
+
+def state_ttl(payload: dict[str, Any]) -> int | None:
+    """DynamoDB TTL epoch for a STATE row: ~a month past the event's end (or its RRULE
+    ``UNTIL``). Returns ``None`` for open-ended recurrences, which must persist while the
+    series is active — otherwise the row would expire and be re-created as a duplicate.
+    """
+    rrule = payload.get("rrule")
+    if rrule:
+        until = _rrule_until(rrule)
+        if until is None:
+            return None
+        end = until
+    else:
+        end = _end_utc(payload["dtend"])
+    return int((end + _STATE_RETENTION).timestamp())
